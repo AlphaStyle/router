@@ -17,7 +17,7 @@ r.GlobalMiddleware(gMiddleware1, gMiddleware2)
 // Handle Group Middleware for the specific request
 r.GroupMiddleware("/admin", aMiddleware1, aMiddleware2)
 
-/ GET requests
+// GET requests
 r.GET("/", indexHandler)
 r.GET("/admin", adminHandler)
 
