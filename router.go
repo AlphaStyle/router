@@ -2,10 +2,9 @@ package router
 
 import (
 	"compress/gzip"
+	"errors"
 	"io"
 	"net/http"
-	"os"
-	"regexp"
 	"strings"
 
 	"github.com/alphastyle/logger"
@@ -69,11 +68,7 @@ func (m *Mux) handleMiddleware(w http.ResponseWriter, r *http.Request) {
 	path := r.URL.Path
 
 	for k := range m.middle {
-		matched, err := regexp.MatchString(k, path)
-		if err != nil {
-			logger.Error(err, "Group middleware regexp error")
-		}
-
+		matched := strings.HasPrefix(path, k)
 		if matched {
 			for _, v := range m.middle[k] {
 				v(w, r)
@@ -96,8 +91,8 @@ func (m *Mux) GroupMiddleware(pattern string, h ...http.HandlerFunc) {
 			m.middle[pattern] = append(m.middle[pattern], v)
 		}
 	} else {
-		logger.Info("Url pattern can't be empty and has to start with / (slash)!")
-		os.Exit(2)
+		err := errors.New("Url pattern can't be empty and has to start with / (slash)!")
+		logger.Error(err, "GroupMiddleware error")
 	}
 }
 
@@ -146,7 +141,7 @@ func (m *Mux) Listen(serve ...string) error {
 	// join serve slice to make a string
 	serveAt := strings.Join(serve, "")
 
-	// print listening @ :8080
+	// ---- print "listening @ :PORT"" ----
 	logger.Info("listening @" + serveAt)
 
 	// start the server
