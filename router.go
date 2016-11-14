@@ -45,38 +45,6 @@ func (m *Mux) POST(pattern string, h http.HandlerFunc) {
 	m.Handle(pattern, http.HandlerFunc(handler))
 }
 
-// Gzip compress all served files
-func Gzip(handler http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Allow the browser to cache content for 1 day (less traffic)
-		w.Header().Set("Cache-Control", "max-age:86400")
-
-		// if request does not accept Gzip then return without Gzip
-		if !strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") {
-			handler.ServeHTTP(w, r)
-		}
-
-		// Allow gzip
-		w.Header().Set("Content-Encoding", "gzip")
-		gz := gzip.NewWriter(w)
-		defer gz.Close()
-		gzw := gzipResponseWriter{Writer: gz, ResponseWriter: w}
-		handler.ServeHTTP(gzw, r)
-	})
-}
-
-// ServeFiles serve static files
-func (m *Mux) ServeFiles(urlPath string, dirPath string, prefix string) {
-	m.Handle(urlPath, Gzip(http.StripPrefix(prefix, http.FileServer(http.Dir(dirPath)))))
-}
-
-// ServeFavicon will serve the favicon you choose
-func (m *Mux) ServeFavicon(filePath string) {
-	m.GET("/favicon.ico", func(w http.ResponseWriter, r *http.Request) {
-		http.ServeFile(w, r, filePath)
-	})
-}
-
 // checkMethod will check the request method
 // and handle middleware
 func (m *Mux) checkMethod(h http.HandlerFunc, method string) http.HandlerFunc {
@@ -114,23 +82,55 @@ func (m *Mux) handleMiddleware(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// GroupMiddleware is to make custome group middleware
-func (m *Mux) GroupMiddleware(pattern string, h ...http.HandlerFunc) {
-	if pattern != "" {
-		for _, v := range h {
-			m.middle[pattern] = append(m.middle[pattern], v)
-		}
-	} else {
-		logger.Info("Url pattern can't be empty! You might want to use GlobalMiddleware instead.")
-		os.Exit(2)
-	}
-}
-
 // GlobalMiddleware is to make custome global middleware
 func (m *Mux) GlobalMiddleware(h ...http.HandlerFunc) {
 	for _, v := range h {
 		m.middle["GLOBAL"] = append(m.middle["GLOBAL"], v)
 	}
+}
+
+// GroupMiddleware is to make custome group middleware
+func (m *Mux) GroupMiddleware(pattern string, h ...http.HandlerFunc) {
+	if pattern != "" && strings.HasPrefix(pattern, "/") {
+		for _, v := range h {
+			m.middle[pattern] = append(m.middle[pattern], v)
+		}
+	} else {
+		logger.Info("Url pattern can't be empty and has to start with / (slash)!")
+		os.Exit(2)
+	}
+}
+
+// Gzip compress all served files
+func Gzip(handler http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Allow the browser to cache content for 1 day (less traffic)
+		w.Header().Set("Cache-Control", "max-age:86400")
+
+		// if request does not accept Gzip then return without Gzip
+		if !strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") {
+			handler.ServeHTTP(w, r)
+		}
+
+		// Allow gzip
+		w.Header().Set("Content-Encoding", "gzip")
+		gz := gzip.NewWriter(w)
+		defer gz.Close()
+		gzw := gzipResponseWriter{Writer: gz, ResponseWriter: w}
+		handler.ServeHTTP(gzw, r)
+	})
+}
+
+// ServeFiles serve static files
+func (m *Mux) ServeFiles(urlPath string, dirPath string, prefix string) {
+	m.Handle(urlPath, Gzip(http.StripPrefix(prefix, http.FileServer(http.Dir(dirPath)))))
+}
+
+// ServeFavicon will serve the favicon you choose
+func (m *Mux) ServeFavicon(filePath string) {
+	m.GET("/favicon.ico", func(w http.ResponseWriter, r *http.Request) {
+		http.ServeFile(w, r, filePath)
+	})
 }
 
 // Listen will start the server (http.ListenAndServe)
