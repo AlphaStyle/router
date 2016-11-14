@@ -2,6 +2,7 @@ package router
 
 import (
 	"compress/gzip"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -10,11 +11,18 @@ import (
 	"github.com/alphastyle/logger"
 )
 
-// Mux is the multiplexer struct
-type Mux struct {
+// mux is the multiplexer struct
+type mux struct {
 	*http.ServeMux
 	middle map[string][]http.HandlerFunc
 }
+
+type MyResponseWriter struct {
+	http.ResponseWriter
+	*http.Request
+}
+
+type myHandlerFunc func(ctx MyResponseWriter)
 
 // Gzip Compression
 type gzipResponseWriter struct {
@@ -27,41 +35,71 @@ func (w gzipResponseWriter) Write(b []byte) (int, error) {
 	return w.Writer.Write(b)
 }
 
-// New will create a new Mux
-func New() *Mux {
-	return &Mux{http.NewServeMux(), make(map[string][]http.HandlerFunc)}
+// New will create a new mux
+func New() *mux {
+	return &mux{http.NewServeMux(), make(map[string][]http.HandlerFunc)}
 }
 
 // GET is a custom http.HandlerFunc that only allow GET requests
-func (m *Mux) GET(pattern string, h http.HandlerFunc) {
+func (m *mux) GET(pattern string, h http.HandlerFunc) {
 	handler := m.checkMethod(h, "GET")
 	m.Handle(pattern, http.HandlerFunc(handler))
 }
 
+// GET is a custom http.HandlerFunc that only allow GET requests
+func (m *mux) GET2(pattern string, h myHandlerFunc) {
+	handler := m.checkMethod2(h, "GET")
+	m.Handle(pattern, http.HandlerFunc(handler))
+}
+
 // POST is a custom http.HandlerFunc that only allow POST requests
-func (m *Mux) POST(pattern string, h http.HandlerFunc) {
-	handler := m.checkMethod(h, "POST")
+func (m *mux) POST(pattern string, h myHandlerFunc) {
+	handler := m.checkMethod2(h, "POST")
 	m.Handle(pattern, http.HandlerFunc(handler))
 }
 
 // checkMethod will check the request method
 // and handle middleware
-func (m *Mux) checkMethod(h http.HandlerFunc, method string) http.HandlerFunc {
+func (m *mux) checkMethod(h http.HandlerFunc, method string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == method {
 			m.handleMiddleware(w, r)
-			h(w, r)
+			h.ServeHTTP(w, r)
 		} else {
 			http.NotFound(w, r)
 		}
 	}
 }
 
+func (m myHandlerFunc) ServeHTTP(ctx MyResponseWriter) {
+	m(ctx)
+}
+
+// checkMethod will check the request method
+// and handle middleware
+func (m *mux) checkMethod2(h myHandlerFunc, method string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == method {
+			m.handleMiddleware(w, r)
+			mrw := MyResponseWriter{w, r}
+			// uw := mrw.updateResponseWriter()
+			h.ServeHTTP(mrw)
+		} else {
+			http.NotFound(w, r)
+		}
+	}
+}
+
+// func (mrw myResponseWriter) updateResponseWriter() myResponseWriter {
+// 	uw := w
+// 	return uw
+// }
+
 // handleMiddleware will serve the correct middleware for the request
-func (m *Mux) handleMiddleware(w http.ResponseWriter, r *http.Request) {
+func (m *mux) handleMiddleware(w http.ResponseWriter, r *http.Request) {
 	// Global Middleware
 	for _, v := range m.middle["GLOBAL"] {
-		v(w, r)
+		v.ServeHTTP(w, r)
 	}
 
 	// Group Middleware
@@ -71,21 +109,21 @@ func (m *Mux) handleMiddleware(w http.ResponseWriter, r *http.Request) {
 		matched := strings.HasPrefix(path, k)
 		if matched {
 			for _, v := range m.middle[k] {
-				v(w, r)
+				v.ServeHTTP(w, r)
 			}
 		}
 	}
 }
 
 // GlobalMiddleware is to make custome global middleware
-func (m *Mux) GlobalMiddleware(h ...http.HandlerFunc) {
+func (m *mux) GlobalMiddleware(h ...http.HandlerFunc) {
 	for _, v := range h {
 		m.middle["GLOBAL"] = append(m.middle["GLOBAL"], v)
 	}
 }
 
 // GroupMiddleware is to make custome group middleware
-func (m *Mux) GroupMiddleware(pattern string, h ...http.HandlerFunc) {
+func (m *mux) GroupMiddleware(pattern string, h ...http.HandlerFunc) {
 	if pattern != "" && strings.HasPrefix(pattern, "/") {
 		for _, v := range h {
 			m.middle[pattern] = append(m.middle[pattern], v)
@@ -117,19 +155,35 @@ func Gzip(handler http.Handler) http.Handler {
 }
 
 // ServeFiles serve static files
-func (m *Mux) ServeFiles(urlPath string, dirPath string, prefix string) {
+func (m *mux) ServeFiles(urlPath string, dirPath string, prefix string) {
 	m.Handle(urlPath, Gzip(http.StripPrefix(prefix, http.FileServer(http.Dir(dirPath)))))
 }
 
 // ServeFavicon will serve the favicon you choose
-func (m *Mux) ServeFavicon(filePath string) {
+func (m *mux) ServeFavicon(filePath string) {
 	m.GET("/favicon.ico", func(w http.ResponseWriter, r *http.Request) {
 		http.ServeFile(w, r, filePath)
 	})
 }
 
+// JSON for json handling
+func (w MyResponseWriter) JSON(data interface{}) {
+	Data, err := json.Marshal(data)
+	if err != nil {
+		logger.Error(err, "JSON Marshal error")
+	}
+
+	w.ResponseWriter.Header().Set("Content-Type", "application/json")
+	w.ResponseWriter.Write(Data)
+}
+
+func (w MyResponseWriter) Write(str string) {
+	b := []byte(str)
+	w.ResponseWriter.Write(b)
+}
+
 // Listen will start the server (http.ListenAndServe)
-func (m *Mux) Listen(serve ...string) error {
+func (m *mux) Listen(serve ...string) error {
 	// if serve parameter is empty then set default values
 	if serve == nil {
 		port := "8000"
