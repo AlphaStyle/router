@@ -14,8 +14,15 @@ import (
 // mux is the multiplexer struct
 type mux struct {
 	*http.ServeMux
-	middle     map[string][]handlerFunc
-	middleHTTP map[string][]http.HandlerFunc
+	middle     []handlerFunc
+	middleHTTP []http.HandlerFunc
+}
+
+// group is to divide request middleware
+type group struct {
+	*mux
+	middleware []handlerFunc
+	prefix     string
 }
 
 // Context is a custome ResponseWriter and Request
@@ -24,6 +31,7 @@ type Context struct {
 	*http.Request
 }
 
+// handlerFunc is custome http.HandleFunc type
 type handlerFunc func(Context)
 
 // Gzip Compression
@@ -38,38 +46,44 @@ func (w gzipResponseWriter) Write(b []byte) (int, error) {
 }
 
 // New will create a new mux
-func New() *mux {
-	return &mux{
-		ServeMux:   http.NewServeMux(),
-		middle:     make(map[string][]handlerFunc),
-		middleHTTP: make(map[string][]http.HandlerFunc),
+func New() *group {
+	m := &mux{
+		ServeMux: http.NewServeMux(),
+	}
+
+	return &group{
+		mux: m,
 	}
 }
 
-// HandlerFunc is a custom http.HandlerFunc that only allow GET requests
-func (m *mux) HandlerFunc(pattern string, h http.HandlerFunc) {
-	handler := m.handleRequestHTTP(h, "ALL")
-	m.Handle(pattern, http.HandlerFunc(handler))
+func (h handlerFunc) ServeHTTP(c Context) {
+	h(c)
+}
+
+// HandlerFunc is a custom http.HandlerFunc
+func (g *group) HandlerFunc(pattern string, h http.HandlerFunc) {
+	handler := g.handleRequestHTTP(h, "ALL")
+	g.Handle(g.prefix+pattern, http.HandlerFunc(handler))
 }
 
 // GET is a custom http.HandlerFunc that only allow GET requests
-func (m *mux) GET(pattern string, h handlerFunc) {
-	handler := m.handleRequest(h, "GET")
-	m.Handle(pattern, http.HandlerFunc(handler))
+func (g *group) GET(pattern string, h handlerFunc) {
+	handler := g.handleRequest(h, "GET")
+	g.Handle(g.prefix+pattern, http.HandlerFunc(handler))
 }
 
 // POST is a custom http.HandlerFunc that only allow POST requests
-func (m *mux) POST(pattern string, h handlerFunc) {
-	handler := m.handleRequest(h, "POST")
-	m.Handle(pattern, http.HandlerFunc(handler))
+func (g *group) POST(pattern string, h handlerFunc) {
+	handler := g.handleRequest(h, "POST")
+	g.Handle(g.prefix+pattern, http.HandlerFunc(handler))
 }
 
 // handleRequestHTTP will handle http.HandlerFunc requests
 // and handle middleware
-func (m *mux) handleRequestHTTP(h http.HandlerFunc, method string) http.HandlerFunc {
+func (g *group) handleRequestHTTP(h http.HandlerFunc, method string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == method && method == "ALL" {
-			m.handleMiddlewareHTTP(w, r)
+		if method == "ALL" {
+			g.handleMiddlewareHTTP(w, r)
 			h.ServeHTTP(w, r)
 		} else {
 			http.NotFound(w, r)
@@ -77,17 +91,12 @@ func (m *mux) handleRequestHTTP(h http.HandlerFunc, method string) http.HandlerF
 	}
 }
 
-func (m handlerFunc) ServeHTTP(c Context) {
-	m(c)
-}
-
-// handleRequest will check the request method
-// and handle middleware
-func (m *mux) handleRequest(h handlerFunc, method string) http.HandlerFunc {
+// handleRequest will check the request method and handle middleware
+func (g *group) handleRequest(h handlerFunc, method string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == method {
 			mrw := Context{w, r}
-			m.handleMiddleware(mrw)
+			g.handleMiddleware(mrw)
 			h.ServeHTTP(mrw)
 		} else {
 			http.NotFound(w, r)
@@ -97,70 +106,67 @@ func (m *mux) handleRequest(h handlerFunc, method string) http.HandlerFunc {
 
 // handleMiddlewareHTTP will serve the correct middleware for the request
 // meant for http.HandlerFunc
-func (m *mux) handleMiddlewareHTTP(w http.ResponseWriter, r *http.Request) {
+func (g *group) handleMiddlewareHTTP(w http.ResponseWriter, r *http.Request) {
 	// Global Middleware
-	for _, v := range m.middleHTTP["GLOBAL"] {
+	for _, v := range g.middleHTTP {
 		v.ServeHTTP(w, r)
 	}
 
 	// Group Middleware
-	// TODO make group middleware work for http.HandlerFunc (router.HandlerFunc)
-	path := r.URL.Path
-
-	for k := range m.middle {
-		matched := strings.HasPrefix(path, k)
-		if matched {
-			for _, v := range m.middleHTTP[k] {
-				v.ServeHTTP(w, r)
-			}
-		}
-	}
+	// TODO make middleware work for HandlerFunc (http.HanderFunc)
+	// for _, v := range g.middleware {
+	// 	v.ServeHTTP(w, r)
+	// }
 }
 
 // handleMiddleware will serve the correct middleware for the request
-func (m *mux) handleMiddleware(c Context) {
+func (g *group) handleMiddleware(c Context) {
 	// Global Middleware
-	for _, v := range m.middle["GLOBAL"] {
+	for _, v := range g.middle {
 		v.ServeHTTP(c)
 	}
 
 	// Group Middleware
-	path := c.Request.URL.Path
+	for _, v := range g.middleware {
+		v.ServeHTTP(c)
+	}
+}
 
-	for k := range m.middle {
-		matched := strings.HasPrefix(path, k)
-		if matched {
-			for _, v := range m.middle[k] {
-				v.ServeHTTP(c)
-			}
+// Use is to make custome global middleware
+func (g *group) Use(h ...handlerFunc) {
+	if g.prefix == "" {
+		for _, v := range h {
+			g.middle = append(g.middle, v)
 		}
 	}
 }
 
 // Use is to make custome global middleware
-func (m *mux) Use(h ...handlerFunc) {
-	for _, v := range h {
-		m.middle["GLOBAL"] = append(m.middle["GLOBAL"], v)
-	}
-}
-
-// Use is to make custome global middleware
-func (m *mux) UseHTTP(h ...http.HandlerFunc) {
-	for _, v := range h {
-		m.middleHTTP["GLOBAL"] = append(m.middleHTTP["GLOBAL"], v)
-	}
-}
-
-// GroupMiddleware is to make custome group middleware
-func (m *mux) GroupMiddleware(pattern string, h ...handlerFunc) {
-	if pattern != "" && strings.HasPrefix(pattern, "/") {
+func (g *group) UseHTTP(h ...http.HandlerFunc) {
+	if g.prefix == "" {
 		for _, v := range h {
-			m.middle[pattern] = append(m.middle[pattern], v)
+			g.middleHTTP = append(g.middleHTTP, v)
+		}
+	}
+}
+
+// Group is to make custome group middleware
+func (g *group) Group(pattern string, h ...handlerFunc) *group {
+	newGroup := &group{
+		mux: g.mux,
+	}
+
+	if pattern != "" && strings.HasPrefix(pattern, "/") {
+		newGroup.prefix = pattern
+		for _, v := range h {
+			newGroup.middleware = append(newGroup.middleware, v)
 		}
 	} else {
 		err := errors.New("Url pattern can't be empty and has to start with / (slash)!")
-		logger.Error(err, "GroupMiddleware error")
+		logger.Error(err, "Group error")
 	}
+
+	return newGroup
 }
 
 // Gzip compress all served files
@@ -184,37 +190,37 @@ func Gzip(handler http.Handler) http.Handler {
 }
 
 // ServeFiles serve static files
-func (m *mux) ServeFiles(urlPath string, dirPath string, prefix string) {
-	m.Handle(urlPath, Gzip(http.StripPrefix(prefix, http.FileServer(http.Dir(dirPath)))))
+func (g *group) ServeFiles(urlPath string, dirPath string, prefix string) {
+	g.Handle(urlPath, Gzip(http.StripPrefix(prefix, http.FileServer(http.Dir(dirPath)))))
 }
 
 // ServeFavicon will serve the favicon you choose
-func (m *mux) ServeFavicon(filePath string) {
-	m.HandlerFunc("/favicon.ico", func(w http.ResponseWriter, r *http.Request) {
+func (g *group) ServeFavicon(filePath string) {
+	g.HandlerFunc("/favicon.ico", func(w http.ResponseWriter, r *http.Request) {
 		http.ServeFile(w, r, filePath)
 	})
 }
 
 // JSON for json handling
-func (ctx Context) JSON(data interface{}) {
+func (c Context) JSON(data interface{}) {
 	Data, err := json.Marshal(data)
 	if err != nil {
 		logger.Error(err, "JSON Marshal error")
 	}
 
-	ctx.ResponseWriter.Header().Set("Content-Type", "application/json")
-	ctx.ResponseWriter.Write(Data)
+	c.ResponseWriter.Header().Set("Content-Type", "application/json")
+	c.ResponseWriter.Write(Data)
 }
 
-func (ctx Context) Write(str string) {
-	ctx.ResponseWriter.Write([]byte(str))
+func (c Context) Write(str string) {
+	c.ResponseWriter.Write([]byte(str))
 }
 
 // Listen will start the server (http.ListenAndServe)
-func (m *mux) Listen(serve string) error {
-	// ---- listening @ :PORT ----
+func (g *group) Listen(serve string) error {
+	// listening @ :PORT
 	logger.Info("listening @" + serve)
 
-	// start the server
-	return http.ListenAndServe(serve, m)
+	// start listening
+	return http.ListenAndServe(serve, g)
 }
