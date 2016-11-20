@@ -229,8 +229,7 @@ func (c *Context) NewContext(key, value interface{}) {
 
 // GetContext will get the context from the spesefic request
 func (c *Context) GetContext(key string) interface{} {
-	ctx := c.Context()
-	val := ctx.Value(key)
+	val := c.Context().Value(key)
 	return val
 }
 

@@ -1,6 +1,6 @@
 # Router
 
-## This package is for learning purposes.
+## This package is for learning purposes
 
 ### Example
 
@@ -25,6 +25,15 @@ func aboutHandler(w http.ResponseWriter, r *http.Request) {
 func gMiddleware1(c router.Context) {
   fmt.Println(c.URL.Path)
   fmt.Println("This is Global Middleware1")
+
+  // New Request Context
+  c.NewContext("key", "value")
+}
+
+func gMiddleware2(c router.Context) {
+  // Get a Request Context
+  ctxVal := c.GetContext("key")
+  fmt.Println(ctxVal)
 }
 
 // Create New multiplexor / router
