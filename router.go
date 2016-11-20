@@ -33,7 +33,7 @@ type Context struct {
 }
 
 // handlerFunc is custome http.HandleFunc type
-type handlerFunc func(Context)
+type handlerFunc func(*Context)
 
 // Gzip Compression
 type gzipResponseWriter struct {
@@ -57,7 +57,7 @@ func New() *group {
 	}
 }
 
-func (h handlerFunc) ServeHTTP(c Context) {
+func (h handlerFunc) ServeHTTP(c *Context) {
 	h(c)
 }
 
@@ -96,7 +96,7 @@ func (g *group) handleRequestHTTP(h http.HandlerFunc, method string) http.Handle
 func (g *group) handleRequest(h handlerFunc, method string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == method {
-			mrw := Context{w, r}
+			mrw := &Context{w, r}
 			g.handleMiddleware(mrw)
 			h.ServeHTTP(mrw)
 		} else {
@@ -121,7 +121,7 @@ func (g *group) handleMiddlewareHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleMiddleware will serve the correct middleware for the request
-func (g *group) handleMiddleware(c Context) {
+func (g *group) handleMiddleware(c *Context) {
 	// Global Middleware
 	for _, v := range g.middle {
 		v.ServeHTTP(c)
@@ -206,7 +206,7 @@ func (g *group) ServeFavicon(filePath string) {
 }
 
 // JSON for json handling
-func (c Context) JSON(data interface{}) {
+func (c *Context) JSON(data interface{}) {
 	Data, err := json.Marshal(data)
 	if err != nil {
 		logger.Error(err, "JSON Marshal error")
@@ -216,19 +216,19 @@ func (c Context) JSON(data interface{}) {
 	c.ResponseWriter.Write(Data)
 }
 
-func (c Context) Write(str string) {
+func (c *Context) Write(str string) {
 	c.ResponseWriter.Write([]byte(str))
 }
 
 // NewContext creates and return the request with context
-func (c Context) NewContext(key, value interface{}) {
+func (c *Context) NewContext(key, value interface{}) {
 	ctx := c.Context()
 	ctx = context.WithValue(ctx, key, value)
 	c.Request = c.WithContext(ctx)
 }
 
 // GetContext will get the context from the spesefic request
-func (c Context) GetContext(key string) interface{} {
+func (c *Context) GetContext(key string) interface{} {
 	ctx := c.Context()
 	val := ctx.Value(key)
 	return val
