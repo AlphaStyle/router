@@ -12,7 +12,7 @@ r := router.New()
 // they will load in the order they are added.
 
 // Handle Global Middleware for every requests
-r.GlobalMiddleware(gMiddleware1, gMiddleware2)
+r.Use(gMiddleware1, gMiddleware2)
 
 // Handle Group Middleware for the specific request
 r.GroupMiddleware("/admin", aMiddleware1, aMiddleware2)
