@@ -37,11 +37,13 @@ r := router.New()
 r.Use(gMiddleware1, gMiddleware2)
 
 // Handle Group Middleware for the specific request
-r.Group("/admin", aMiddleware1, aMiddleware2)
+admin := r.Group("/admin", aMiddleware1, aMiddleware2)
+
+// Get Request With Admin Middleware (localhost:8000/admin/index)
+admin.GET("/index", adminHandler)
 
 // GET requests
 r.GET("/", indexHandler)
-r.GET("/admin", adminHandler)
 
 // POST requests
 r.POST("/register", registerHandler)
