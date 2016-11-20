@@ -2,6 +2,7 @@ package router
 
 import (
 	"compress/gzip"
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -45,7 +46,7 @@ func (w gzipResponseWriter) Write(b []byte) (int, error) {
 	return w.Writer.Write(b)
 }
 
-// New will create a new mux
+// New will create a new group
 func New() *group {
 	m := &mux{
 		ServeMux: http.NewServeMux(),
@@ -150,17 +151,20 @@ func (g *group) UseHTTP(h ...http.HandlerFunc) {
 	}
 }
 
-// Group is to make custome group middleware
+// Group makes it possible to have custome group middleware
 func (g *group) Group(pattern string, h ...handlerFunc) *group {
+	// Initialize new group
 	newGroup := &group{
 		mux: g.mux,
 	}
 
 	if pattern != "" && strings.HasPrefix(pattern, "/") {
 		newGroup.prefix = pattern
+
 		for _, v := range h {
 			newGroup.middleware = append(newGroup.middleware, v)
 		}
+
 	} else {
 		err := errors.New("Url pattern can't be empty and has to start with / (slash)!")
 		logger.Error(err, "Group error")
@@ -214,6 +218,20 @@ func (c Context) JSON(data interface{}) {
 
 func (c Context) Write(str string) {
 	c.ResponseWriter.Write([]byte(str))
+}
+
+// NewContext creates and return the request with context
+func (c Context) NewContext(key, value interface{}) {
+	ctx := c.Context()
+	ctx = context.WithValue(ctx, key, value)
+	c.Request = c.WithContext(ctx)
+}
+
+// GetContext will get the context from the spesefic request
+func (c Context) GetContext(key string) interface{} {
+	ctx := c.Context()
+	val := ctx.Value(key)
+	return val
 }
 
 // Listen will start the server (http.ListenAndServe)
