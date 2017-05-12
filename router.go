@@ -263,9 +263,22 @@ func (c *Context) GetSession(name string) (*http.Cookie, error) {
 
 // Listen will start the server (http.ListenAndServe)
 func (g *Group) Listen(serve string) error {
+	// Create server
+	s := &http.Server{
+		Addr:           serve,
+		Handler:        g,
+		ReadTimeout:    10 * time.Second,
+		WriteTimeout:   10 * time.Second,
+		MaxHeaderBytes: 1 << 20,
+	}
+
 	// listening @ :PORT
 	logger.Info("listening @" + serve)
-
 	// start listening
-	return http.ListenAndServe(serve, g)
+	err := s.ListenAndServe()
+	if err != nil {
+		logger.Error(err, "Server Error")
+	}
+
+	return err
 }
