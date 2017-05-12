@@ -1,39 +1,51 @@
-# Router
+# Router (mini framework)
 
-## This package is for learning purposes
+## This package is for learning purposes only
 
 ### Example
 
-```go
+``` go
 // GET Example Handler
 func indexHandler(c router.Context) {
-  c.Write("This is index Page")
+	c.Write("This is index Page")
 }
 
 // POST Example Handler
 func registerHandler(c router.Context) {
-  c.Write("This is Register Page")
-  c.JSON(structData)
+	c.Write("This is Register Page")
+	// WIll post JSON
+	c.JSON(structData)
 }
 
-// HandlerFunc Example
-func aboutHandler(w http.ResponseWriter, r *http.Request) {
-  w.Write([]byte("This is About Page"))
-}
-
-// Middleware Example
+// Middleware Example 1
 func gMiddleware1(c router.Context) {
-  fmt.Println(c.URL.Path)
-  fmt.Println("This is Global Middleware1")
+	fmt.Println(c.URL.Path)
+	fmt.Println("This is Global Middleware1")
 
-  // New Request Context
-  c.NewContext("key", "value")
+	// New Request Context
+	c.NewContext("key", "value")
+
+	// Create a cookie session if cookie with name "key" does not exist
+	if _, err := c.GetSession("key"); err != nil {
+		c.NewSession("key")
+	}
 }
 
+// Middleware Example 2
 func gMiddleware2(c router.Context) {
-  // Get a Request Context
-  ctxVal := c.GetContext("key")
-  fmt.Println(ctxVal)
+	// Get a Request Context
+	ctxVal := c.GetContext("key")
+	fmt.Println(ctxVal)
+
+    // Get a cookie Session
+    cookie, err := c.GetSession("ket")
+    if err != nil {
+    	// handle error
+    }
+    fmt.Println(cookie.Value) // print cookie value
+
+    // Use c.DeleteSession to delete a cookie
+    c.DeleteSession("key")
 }
 
 // Create New multiplexor / router
@@ -48,21 +60,21 @@ r.Use(gMiddleware1, gMiddleware2)
 // Handle Group Middleware for the specific request
 admin := r.Group("/admin", aMiddleware1, aMiddleware2)
 
-// Get Request With Admin Middleware (localhost:8000/admin/index)
+//You can also add Middleware by using the Use method to a group
+admin.Use(aMiddleware1)
+
+// GET Request With Admin Middleware (localhost:8000/admin/index)
 admin.GET("/index", adminHandler)
 
-// GET requests
+// GET requests (localhost:8000/)
 r.GET("/", indexHandler)
 
-// POST requests
+// POST requests (localhost:8000/register | /login | /logout)
 r.POST("/register", registerHandler)
 r.POST("/login", loginHandler)
 r.POST("/logout". logoutHandler)
 
-// HandlerFunc request (like http.HandlerFunc)
-r.HandlerFunc("/" aboutHandler)
-
-// Serve Static Files (Gzip and cache)
+// Serve Static Files such as css, js (with Gzip and cache)
 r.ServeFiles("urlPath", "dirPath", "prefix")
 
 // Serve Favicon

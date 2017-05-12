@@ -6,17 +6,19 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"math/rand"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/alphastyle/logger"
+	uuid "github.com/satori/go.uuid"
 )
 
 // mux is the multiplexer struct
 type mux struct {
 	*http.ServeMux
-	middle     []handlerFunc
-	middleHTTP []http.HandlerFunc
+	middle []handlerFunc
 }
 
 // group is to divide request middleware
@@ -26,13 +28,13 @@ type group struct {
 	prefix     string
 }
 
-// Context is a custome ResponseWriter and Request
+// Context is a custom ResponseWriter and Request
 type Context struct {
 	http.ResponseWriter
 	*http.Request
 }
 
-// handlerFunc is custome http.HandleFunc type
+// handlerFunc is custom http.HandleFunc type
 type handlerFunc func(*Context)
 
 // Gzip Compression
@@ -48,23 +50,15 @@ func (w gzipResponseWriter) Write(b []byte) (int, error) {
 
 // New will create a new group
 func New() *group {
-	m := &mux{
-		ServeMux: http.NewServeMux(),
-	}
-
 	return &group{
-		mux: m,
+		mux: &mux{
+			ServeMux: http.NewServeMux(),
+		},
 	}
 }
 
 func (h handlerFunc) ServeHTTP(c *Context) {
 	h(c)
-}
-
-// HandlerFunc is a custom http.HandlerFunc
-func (g *group) HandlerFunc(pattern string, h http.HandlerFunc) {
-	handler := g.handleRequestHTTP(h, "ALL")
-	g.Handle(g.prefix+pattern, http.HandlerFunc(handler))
 }
 
 // GET is a custom http.HandlerFunc that only allow GET requests
@@ -79,23 +73,11 @@ func (g *group) POST(pattern string, h handlerFunc) {
 	g.Handle(g.prefix+pattern, http.HandlerFunc(handler))
 }
 
-// handleRequestHTTP will handle http.HandlerFunc requests
-// and handle middleware
-func (g *group) handleRequestHTTP(h http.HandlerFunc, method string) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		if method == "ALL" {
-			g.handleMiddlewareHTTP(w, r)
-			h.ServeHTTP(w, r)
-		} else {
-			http.NotFound(w, r)
-		}
-	}
-}
-
 // handleRequest will check the request method and handle middleware
 func (g *group) handleRequest(h handlerFunc, method string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == method {
+			// w.Header().Set("Content-Type", "text/HTML")
 			mrw := &Context{w, r}
 			g.handleMiddleware(mrw)
 			h.ServeHTTP(mrw)
@@ -103,21 +85,6 @@ func (g *group) handleRequest(h handlerFunc, method string) http.HandlerFunc {
 			http.NotFound(w, r)
 		}
 	}
-}
-
-// handleMiddlewareHTTP will serve the correct middleware for the request
-// meant for http.HandlerFunc
-func (g *group) handleMiddlewareHTTP(w http.ResponseWriter, r *http.Request) {
-	// Global Middleware
-	for _, v := range g.middleHTTP {
-		v.ServeHTTP(w, r)
-	}
-
-	// Group Middleware
-	// TODO make middleware work for HandlerFunc (http.HanderFunc)
-	// for _, v := range g.middleware {
-	// 	v.ServeHTTP(w, r)
-	// }
 }
 
 // handleMiddleware will serve the correct middleware for the request
@@ -133,25 +100,23 @@ func (g *group) handleMiddleware(c *Context) {
 	}
 }
 
-// Use is to make custome global middleware
+// Use is to make custom global middleware
+// or group middleware
 func (g *group) Use(h ...handlerFunc) {
 	if g.prefix == "" {
+		// Global Middleware
 		for _, v := range h {
 			g.middle = append(g.middle, v)
 		}
-	}
-}
-
-// Use is to make custome global middleware
-func (g *group) UseHTTP(h ...http.HandlerFunc) {
-	if g.prefix == "" {
+	} else {
+		// Group Middleware
 		for _, v := range h {
-			g.middleHTTP = append(g.middleHTTP, v)
+			g.middleware = append(g.middleware, v)
 		}
 	}
 }
 
-// Group makes it possible to have custome group middleware
+// Group makes it possible to have custom group middleware
 func (g *group) Group(pattern string, h ...handlerFunc) *group {
 	// Initialize new group
 	newGroup := &group{
@@ -160,7 +125,7 @@ func (g *group) Group(pattern string, h ...handlerFunc) *group {
 
 	if pattern != "" && strings.HasPrefix(pattern, "/") {
 		newGroup.prefix = pattern
-
+		// Appending middleware to the new group
 		for _, v := range h {
 			newGroup.middleware = append(newGroup.middleware, v)
 		}
@@ -200,8 +165,8 @@ func (g *group) ServeFiles(urlPath string, dirPath string, prefix string) {
 
 // ServeFavicon will serve the favicon you choose
 func (g *group) ServeFavicon(filePath string) {
-	g.HandlerFunc("/favicon.ico", func(w http.ResponseWriter, r *http.Request) {
-		http.ServeFile(w, r, filePath)
+	g.GET("/favicon.ico", func(c *Context) {
+		http.ServeFile(c.ResponseWriter, c.Request, filePath)
 	})
 }
 
@@ -227,10 +192,73 @@ func (c *Context) NewContext(key, value interface{}) {
 	c.Request = c.WithContext(ctx)
 }
 
-// GetContext will get the context from the spesefic request
+// GetContext will get the context from the specific request
 func (c *Context) GetContext(key string) interface{} {
 	val := c.Context().Value(key)
 	return val
+}
+
+// Got this from Stackoverflow (Copy / Paste)
+// Will create a random string with the length n
+// func randomValue(n int, src rand.Source) string {
+// 	letterBytes := "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+// 	letterIdxBits := uint(6)              // 6 bits to represent a letter index
+// 	letterIdxMask := 1<<letterIdxBits - 1 // All 1-bits, as many as letterIdxBits
+// 	letterIdxMax := 63 / letterIdxBits    // # of letter indices fitting in 63 bits
+
+// 	b := make([]byte, n)
+// 	// A src.Int63() generates 63 random bits, enough for letterIdxMax characters!
+// 	for i, cache, remain := n-1, src.Int63(), letterIdxMax; i >= 0; {
+// 		if remain == 0 {
+// 			cache, remain = src.Int63(), letterIdxMax
+// 		}
+// 		if idx := int(cache & int64(letterIdxMask)); idx < len(letterBytes) {
+// 			b[i] = letterBytes[idx]
+// 			i--
+// 		}
+// 		cache >>= letterIdxBits
+// 		remain--
+// 	}
+
+// 	return string(b)
+// }
+
+func randomValue() uuid.UUID {
+	return uuid.NewV4()
+}
+
+// NewSession will create a new cookie session
+func (c *Context) NewSession(name string) {
+	value := randomValue(40, rand.NewSource(time.Now().UnixNano()))
+	expiration := time.Now().Add(30 * time.Minute) // TODO make time a config setting
+
+	cookie := &http.Cookie{
+		Name:    name,
+		Value:   value,
+		Expires: expiration,
+		Path:    "/",
+	}
+
+	http.SetCookie(c.ResponseWriter, cookie)
+}
+
+// DeleteSession will delete the cookie session
+func (c *Context) DeleteSession(name string) {
+	cookie := &http.Cookie{
+		Name:    name,
+		Value:   "deleted",
+		Expires: time.Now(),
+		MaxAge:  -1,
+		Path:    "/",
+	}
+
+	http.SetCookie(c.ResponseWriter, cookie)
+}
+
+// GetSession will get the cookie session
+func (c *Context) GetSession(name string) (*http.Cookie, error) {
+	cookie, err := c.Cookie(name)
+	return cookie, err
 }
 
 // Listen will start the server (http.ListenAndServe)
