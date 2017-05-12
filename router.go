@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
-	"math/rand"
 	"net/http"
 	"strings"
 	"time"
@@ -21,8 +20,8 @@ type mux struct {
 	middle []handlerFunc
 }
 
-// group is to divide request middleware
-type group struct {
+// Group is to divide request middleware
+type Group struct {
 	*mux
 	middleware []handlerFunc
 	prefix     string
@@ -49,8 +48,8 @@ func (w gzipResponseWriter) Write(b []byte) (int, error) {
 }
 
 // New will create a new group
-func New() *group {
-	return &group{
+func New() *Group {
+	return &Group{
 		mux: &mux{
 			ServeMux: http.NewServeMux(),
 		},
@@ -62,19 +61,19 @@ func (h handlerFunc) ServeHTTP(c *Context) {
 }
 
 // GET is a custom http.HandlerFunc that only allow GET requests
-func (g *group) GET(pattern string, h handlerFunc) {
+func (g *Group) GET(pattern string, h handlerFunc) {
 	handler := g.handleRequest(h, "GET")
 	g.Handle(g.prefix+pattern, http.HandlerFunc(handler))
 }
 
 // POST is a custom http.HandlerFunc that only allow POST requests
-func (g *group) POST(pattern string, h handlerFunc) {
+func (g *Group) POST(pattern string, h handlerFunc) {
 	handler := g.handleRequest(h, "POST")
 	g.Handle(g.prefix+pattern, http.HandlerFunc(handler))
 }
 
 // handleRequest will check the request method and handle middleware
-func (g *group) handleRequest(h handlerFunc, method string) http.HandlerFunc {
+func (g *Group) handleRequest(h handlerFunc, method string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == method {
 			// w.Header().Set("Content-Type", "text/HTML")
@@ -88,7 +87,7 @@ func (g *group) handleRequest(h handlerFunc, method string) http.HandlerFunc {
 }
 
 // handleMiddleware will serve the correct middleware for the request
-func (g *group) handleMiddleware(c *Context) {
+func (g *Group) handleMiddleware(c *Context) {
 	// Global Middleware
 	for _, v := range g.middle {
 		v.ServeHTTP(c)
@@ -102,7 +101,7 @@ func (g *group) handleMiddleware(c *Context) {
 
 // Use is to make custom global middleware
 // or group middleware
-func (g *group) Use(h ...handlerFunc) {
+func (g *Group) Use(h ...handlerFunc) {
 	if g.prefix == "" {
 		// Global Middleware
 		for _, v := range h {
@@ -117,9 +116,9 @@ func (g *group) Use(h ...handlerFunc) {
 }
 
 // Group makes it possible to have custom group middleware
-func (g *group) Group(pattern string, h ...handlerFunc) *group {
+func (g *Group) Group(pattern string, h ...handlerFunc) *Group {
 	// Initialize new group
-	newGroup := &group{
+	newGroup := &Group{
 		mux: g.mux,
 	}
 
@@ -159,12 +158,12 @@ func Gzip(handler http.Handler) http.Handler {
 }
 
 // ServeFiles serve static files
-func (g *group) ServeFiles(urlPath string, dirPath string, prefix string) {
+func (g *Group) ServeFiles(urlPath string, dirPath string, prefix string) {
 	g.Handle(urlPath, Gzip(http.StripPrefix(prefix, http.FileServer(http.Dir(dirPath)))))
 }
 
 // ServeFavicon will serve the favicon you choose
-func (g *group) ServeFavicon(filePath string) {
+func (g *Group) ServeFavicon(filePath string) {
 	g.GET("/favicon.ico", func(c *Context) {
 		http.ServeFile(c.ResponseWriter, c.Request, filePath)
 	})
@@ -229,12 +228,13 @@ func randomValue() uuid.UUID {
 
 // NewSession will create a new cookie session
 func (c *Context) NewSession(name string) {
-	value := randomValue(40, rand.NewSource(time.Now().UnixNano()))
+	// value := randomValue(40, rand.NewSource(time.Now().UnixNano()))
+	value := randomValue()
 	expiration := time.Now().Add(30 * time.Minute) // TODO make time a config setting
 
 	cookie := &http.Cookie{
 		Name:    name,
-		Value:   value,
+		Value:   value.String(),
 		Expires: expiration,
 		Path:    "/",
 	}
@@ -262,7 +262,7 @@ func (c *Context) GetSession(name string) (*http.Cookie, error) {
 }
 
 // Listen will start the server (http.ListenAndServe)
-func (g *group) Listen(serve string) error {
+func (g *Group) Listen(serve string) error {
 	// listening @ :PORT
 	logger.Info("listening @" + serve)
 

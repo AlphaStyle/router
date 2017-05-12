@@ -7,40 +7,40 @@
 ``` go
 // GET Example Handler
 func indexHandler(c router.Context) {
-	c.Write("This is index Page")
+  c.Write("This is index Page")
 }
 
 // POST Example Handler
 func registerHandler(c router.Context) {
-	c.Write("This is Register Page")
-	// WIll post JSON
-	c.JSON(structData)
+  c.Write("This is Register Page")
+  // WIll post JSON
+  c.JSON(structData)
 }
 
 // Middleware Example 1
 func gMiddleware1(c router.Context) {
-	fmt.Println(c.URL.Path)
-	fmt.Println("This is Global Middleware1")
+  fmt.Println(c.URL.Path)
+  fmt.Println("This is Global Middleware1")
 
-	// New Request Context
-	c.NewContext("key", "value")
+  // New Request Context
+  c.NewContext("key", "value")
 
-	// Create a cookie session if cookie with name "key" does not exist
-	if _, err := c.GetSession("key"); err != nil {
-		c.NewSession("key")
-	}
+  // Create a cookie session if cookie with name "key" does not exist
+  if _, err := c.GetSession("key"); err != nil {
+    c.NewSession("key")
+  }
 }
 
 // Middleware Example 2
 func gMiddleware2(c router.Context) {
-	// Get a Request Context
-	ctxVal := c.GetContext("key")
-	fmt.Println(ctxVal)
+  // Get a Request Context
+  ctxVal := c.GetContext("key")
+  fmt.Println(ctxVal)
 
     // Get a cookie Session
     cookie, err := c.GetSession("ket")
     if err != nil {
-    	// handle error
+      // handle error
     }
     fmt.Println(cookie.Value) // print cookie value
 
@@ -48,10 +48,10 @@ func gMiddleware2(c router.Context) {
     c.DeleteSession("key")
 }
 
-// Create New multiplexor / router
+// Create New multiplexer / router
 r := router.New()
 
-// You can add as many middlewares as you like,
+// You can add as many middleware as you like,
 // they will load in the order they are added.
 
 // Handle Global Middleware for every requests
@@ -60,7 +60,7 @@ r.Use(gMiddleware1, gMiddleware2)
 // Handle Group Middleware for the specific request
 admin := r.Group("/admin", aMiddleware1, aMiddleware2)
 
-//You can also add Middleware by using the Use method to a group
+//You can also add Middleware by using the Use method to a Group
 admin.Use(aMiddleware1)
 
 // GET Request With Admin Middleware (localhost:8000/admin/index)
