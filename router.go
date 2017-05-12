@@ -274,6 +274,7 @@ func (g *Group) Listen(serve string) error {
 
 	// listening @ :PORT
 	logger.Info("listening @" + serve)
+
 	// start listening
 	err := s.ListenAndServe()
 	if err != nil {
