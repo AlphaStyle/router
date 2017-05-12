@@ -2,20 +2,39 @@ package router
 
 import (
 	"compress/gzip"
+	"context"
+	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
-	"os"
-	"regexp"
 	"strings"
+	"time"
 
 	"github.com/alphastyle/logger"
+	uuid "github.com/satori/go.uuid"
 )
 
-// Mux is the multiplexer struct
-type Mux struct {
+// mux is the multiplexer struct
+type mux struct {
 	*http.ServeMux
-	middle map[string][]http.HandlerFunc
+	middle []handlerFunc
 }
+
+// Group is to divide request middleware
+type Group struct {
+	*mux
+	middleware []handlerFunc
+	prefix     string
+}
+
+// Context is a custom ResponseWriter and Request
+type Context struct {
+	http.ResponseWriter
+	*http.Request
+}
+
+// handlerFunc is custom http.HandleFunc type
+type handlerFunc func(*Context)
 
 // Gzip Compression
 type gzipResponseWriter struct {
@@ -28,21 +47,94 @@ func (w gzipResponseWriter) Write(b []byte) (int, error) {
 	return w.Writer.Write(b)
 }
 
-// New will create a new Mux
-func New() *Mux {
-	return &Mux{http.NewServeMux(), make(map[string][]http.HandlerFunc)}
+// New will create a new group
+func New() *Group {
+	return &Group{
+		mux: &mux{
+			ServeMux: http.NewServeMux(),
+		},
+	}
+}
+
+func (h handlerFunc) ServeHTTP(c *Context) {
+	h(c)
 }
 
 // GET is a custom http.HandlerFunc that only allow GET requests
-func (m *Mux) GET(pattern string, h http.HandlerFunc) {
-	handler := m.checkMethod(h, "GET")
-	m.Handle(pattern, http.HandlerFunc(handler))
+func (g *Group) GET(pattern string, h handlerFunc) {
+	handler := g.handleRequest(h, "GET")
+	g.Handle(g.prefix+pattern, http.HandlerFunc(handler))
 }
 
 // POST is a custom http.HandlerFunc that only allow POST requests
-func (m *Mux) POST(pattern string, h http.HandlerFunc) {
-	handler := m.checkMethod(h, "POST")
-	m.Handle(pattern, http.HandlerFunc(handler))
+func (g *Group) POST(pattern string, h handlerFunc) {
+	handler := g.handleRequest(h, "POST")
+	g.Handle(g.prefix+pattern, http.HandlerFunc(handler))
+}
+
+// handleRequest will check the request method and handle middleware
+func (g *Group) handleRequest(h handlerFunc, method string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == method {
+			// w.Header().Set("Content-Type", "text/HTML")
+			mrw := &Context{w, r}
+			g.handleMiddleware(mrw)
+			h.ServeHTTP(mrw)
+		} else {
+			http.NotFound(w, r)
+		}
+	}
+}
+
+// handleMiddleware will serve the correct middleware for the request
+func (g *Group) handleMiddleware(c *Context) {
+	// Global Middleware
+	for _, v := range g.middle {
+		v.ServeHTTP(c)
+	}
+
+	// Group Middleware
+	for _, v := range g.middleware {
+		v.ServeHTTP(c)
+	}
+}
+
+// Use is to make custom global middleware
+// or group middleware
+func (g *Group) Use(h ...handlerFunc) {
+	if g.prefix == "" {
+		// Global Middleware
+		for _, v := range h {
+			g.middle = append(g.middle, v)
+		}
+	} else {
+		// Group Middleware
+		for _, v := range h {
+			g.middleware = append(g.middleware, v)
+		}
+	}
+}
+
+// Group makes it possible to have custom group middleware
+func (g *Group) Group(pattern string, h ...handlerFunc) *Group {
+	// Initialize new group
+	newGroup := &Group{
+		mux: g.mux,
+	}
+
+	if pattern != "" && strings.HasPrefix(pattern, "/") {
+		newGroup.prefix = pattern
+		// Appending middleware to the new group
+		for _, v := range h {
+			newGroup.middleware = append(newGroup.middleware, v)
+		}
+
+	} else {
+		err := errors.New("Url pattern can't be empty and has to start with / (slash)!")
+		logger.Error(err, "Group error")
+	}
+
+	return newGroup
 }
 
 // Gzip compress all served files
@@ -66,90 +158,128 @@ func Gzip(handler http.Handler) http.Handler {
 }
 
 // ServeFiles serve static files
-func (m *Mux) ServeFiles(urlPath string, dirPath string, prefix string) {
-	m.Handle(urlPath, Gzip(http.StripPrefix(prefix, http.FileServer(http.Dir(dirPath)))))
+func (g *Group) ServeFiles(urlPath string, dirPath string, prefix string) {
+	g.Handle(urlPath, Gzip(http.StripPrefix(prefix, http.FileServer(http.Dir(dirPath)))))
 }
 
 // ServeFavicon will serve the favicon you choose
-func (m *Mux) ServeFavicon(filePath string) {
-	m.GET("/favicon.ico", func(w http.ResponseWriter, r *http.Request) {
-		http.ServeFile(w, r, filePath)
+func (g *Group) ServeFavicon(filePath string) {
+	g.GET("/favicon.ico", func(c *Context) {
+		http.ServeFile(c.ResponseWriter, c.Request, filePath)
 	})
 }
 
-// checkMethod will check the request method
-// and handle middleware
-func (m *Mux) checkMethod(h http.HandlerFunc, method string) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == method {
-			m.handleMiddleware(w, r)
-			h(w, r)
-		} else {
-			http.NotFound(w, r)
-		}
+// JSON for json handling
+func (c *Context) JSON(data interface{}) {
+	Data, err := json.Marshal(data)
+	if err != nil {
+		logger.Error(err, "JSON Marshal error")
 	}
+
+	c.ResponseWriter.Header().Set("Content-Type", "application/json")
+	c.ResponseWriter.Write(Data)
 }
 
-// handleMiddleware will serve the correct middleware for the request
-func (m *Mux) handleMiddleware(w http.ResponseWriter, r *http.Request) {
-	// Global Middleware
-	for _, v := range m.middle["GLOBAL"] {
-		v(w, r)
-	}
-
-	// Group Middleware
-	path := r.URL.Path
-
-	for k := range m.middle {
-		matched, err := regexp.MatchString(k, path)
-		if err != nil {
-			logger.Error(err, "Group middleware regexp error")
-		}
-
-		if matched {
-			for _, v := range m.middle[k] {
-				v(w, r)
-			}
-		}
-	}
+func (c *Context) Write(str string) {
+	c.ResponseWriter.Write([]byte(str))
 }
 
-// GroupMiddleware is to make custome group middleware
-func (m *Mux) GroupMiddleware(pattern string, h ...http.HandlerFunc) {
-	if pattern != "" {
-		for _, v := range h {
-			m.middle[pattern] = append(m.middle[pattern], v)
-		}
-	} else {
-		logger.Info("Url pattern can't be empty! You might want to use GlobalMiddleware instead.")
-		os.Exit(2)
-	}
+// NewContext creates and return the request with context
+func (c *Context) NewContext(key, value interface{}) {
+	ctx := c.Context()
+	ctx = context.WithValue(ctx, key, value)
+	c.Request = c.WithContext(ctx)
 }
 
-// GlobalMiddleware is to make custome global middleware
-func (m *Mux) GlobalMiddleware(h ...http.HandlerFunc) {
-	for _, v := range h {
-		m.middle["GLOBAL"] = append(m.middle["GLOBAL"], v)
+// GetContext will get the context from the specific request
+func (c *Context) GetContext(key string) interface{} {
+	val := c.Context().Value(key)
+	return val
+}
+
+// Got this from Stackoverflow (Copy / Paste)
+// Will create a random string with the length n
+// func randomValue(n int, src rand.Source) string {
+// 	letterBytes := "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+// 	letterIdxBits := uint(6)              // 6 bits to represent a letter index
+// 	letterIdxMask := 1<<letterIdxBits - 1 // All 1-bits, as many as letterIdxBits
+// 	letterIdxMax := 63 / letterIdxBits    // # of letter indices fitting in 63 bits
+
+// 	b := make([]byte, n)
+// 	// A src.Int63() generates 63 random bits, enough for letterIdxMax characters!
+// 	for i, cache, remain := n-1, src.Int63(), letterIdxMax; i >= 0; {
+// 		if remain == 0 {
+// 			cache, remain = src.Int63(), letterIdxMax
+// 		}
+// 		if idx := int(cache & int64(letterIdxMask)); idx < len(letterBytes) {
+// 			b[i] = letterBytes[idx]
+// 			i--
+// 		}
+// 		cache >>= letterIdxBits
+// 		remain--
+// 	}
+
+// 	return string(b)
+// }
+
+func randomValue() uuid.UUID {
+	return uuid.NewV4()
+}
+
+// NewSession will create a new cookie session
+func (c *Context) NewSession(name string) {
+	// value := randomValue(40, rand.NewSource(time.Now().UnixNano()))
+	value := randomValue()
+	expiration := time.Now().Add(30 * time.Minute) // TODO make time a config setting
+
+	cookie := &http.Cookie{
+		Name:    name,
+		Value:   value.String(),
+		Expires: expiration,
+		Path:    "/",
 	}
+
+	http.SetCookie(c.ResponseWriter, cookie)
+}
+
+// DeleteSession will delete the cookie session
+func (c *Context) DeleteSession(name string) {
+	cookie := &http.Cookie{
+		Name:    name,
+		Value:   "deleted",
+		Expires: time.Now(),
+		MaxAge:  -1,
+		Path:    "/",
+	}
+
+	http.SetCookie(c.ResponseWriter, cookie)
+}
+
+// GetSession will get the cookie session
+func (c *Context) GetSession(name string) (*http.Cookie, error) {
+	cookie, err := c.Cookie(name)
+	return cookie, err
 }
 
 // Listen will start the server (http.ListenAndServe)
-func (m *Mux) Listen(serve ...string) error {
-	// if serve parameter is empty then set default values
-	if serve == nil {
-		port := "8000"
-		address := ""
-
-		serve = []string{address, ":", port}
+func (g *Group) Listen(serve string) error {
+	// Create server
+	s := &http.Server{
+		Addr:           serve,
+		Handler:        g,
+		ReadTimeout:    10 * time.Second,
+		WriteTimeout:   10 * time.Second,
+		MaxHeaderBytes: 1 << 20,
 	}
 
-	// join serve slice to make a string
-	serveAt := strings.Join(serve, "")
+	// listening @ :PORT
+	logger.Info("listening @" + serve)
 
-	// print listening @ :8080
-	logger.Info("listening @" + serveAt)
+	// start listening
+	err := s.ListenAndServe()
+	if err != nil {
+		logger.Error(err, "Server Error")
+	}
 
-	// start the server
-	err := http.ListenAndServe(serveAt, m)
 	return err
 }
